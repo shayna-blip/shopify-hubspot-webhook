@@ -6,65 +6,67 @@ export default async function handler(req, res) {
   try {
     const order = req.body;
 
-    // 1. Get Shopify order number (ex: 1358)
+    // Shopify order number (e.g. 1358)
     const shopifyOrderNumber = String(order.order_number);
 
-    // 2. Extract Kickflip design URL
+    // Find Kickflip / MyCustomizer image URL
     let designUrl = null;
 
     for (const item of order.line_items || []) {
-      if (item.properties) {
-        for (const prop of item.properties) {
-          if (
-            prop.value &&
-            typeof prop.value === "string" &&
-            prop.value.includes("cdnv2.mycustomizer.com")
-          ) {
-            designUrl = prop.value;
-            break;
-          }
+      for (const prop of item.properties || []) {
+        if (
+          typeof prop.value === "string" &&
+          prop.value.includes("cdnv2.mycustomizer.com")
+        ) {
+          designUrl = prop.value;
+          break;
         }
       }
       if (designUrl) break;
     }
 
-    // No design = nothing to update (still success)
     if (!designUrl) {
+      console.log("No design URL found");
       return res.status(200).json({ message: "No design URL found" });
     }
 
-    // 3. Get HubSpot orders (LIST, not SEARCH)
-    const listRes = await fetch(
-      "https://api.hubapi.com/crm/v3/objects/orders?limit=100",
+    // Search HubSpot Order by order number
+    const searchRes = await fetch(
+      "https://api.hubapi.com/crm/v3/objects/orders/search",
       {
+        method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.HUBSPOT_TOKEN}`,
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          filterGroups: [
+            {
+              filters: [
+                {
+                  propertyName: "hs_order_number",
+                  operator: "EQ",
+                  value: shopifyOrderNumber,
+                },
+              ],
+            },
+          ],
+          limit: 1,
+        }),
       }
     );
 
-    const listData = await listRes.json();
+    const searchData = await searchRes.json();
+    const orderId = searchData?.results?.[0]?.id;
 
-    if (!listData.results) {
-      return res.status(500).json({ error: "Failed to fetch HubSpot orders" });
+    if (!orderId) {
+      console.error("HubSpot order not found", searchData);
+      return res.status(404).json({ message: "HubSpot order not found" });
     }
 
-    // Match HubSpot order by hs_order_number
-    const matchedOrder = listData.results.find(
-      (o) => o.properties.hs_order_number === shopifyOrderNumber
-    );
-
-    if (!matchedOrder) {
-      return res
-        .status(404)
-        .json({ message: "HubSpot order not found" });
-    }
-
-    const hubspotOrderId = matchedOrder.id;
-
-    // 4. Update Design Proof URL in HubSpot
-    await fetch(
-      `https://api.hubapi.com/crm/v3/objects/orders/${hubspotOrderId}`,
+    // Update Design Proof URL
+    const updateRes = await fetch(
+      `https://api.hubapi.com/crm/v3/objects/orders/${orderId}`,
       {
         method: "PATCH",
         headers: {
@@ -79,10 +81,16 @@ export default async function handler(req, res) {
       }
     );
 
+    if (!updateRes.ok) {
+      const err = await updateRes.text();
+      console.error("HubSpot update failed:", err);
+      return res.status(500).json({ error: "Update failed" });
+    }
+
+    console.log("Design URL synced:", designUrl);
     return res.status(200).json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error("Webhook error:", err);
     return res.status(500).json({ error: "Webhook failed" });
   }
 }
-
