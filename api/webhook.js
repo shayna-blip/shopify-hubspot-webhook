@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   try {
     const order = req.body;
 
-    // 1. Build HubSpot order name (matches HubSpot exactly)
+    // 1. Build HubSpot order name
     const hubspotOrderName = `#${order.order_number}`;
 
     // 2. Extract Kickflip / MyCustomizer design URL
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ message: "No design URL found" });
     }
 
-    // 3. Find HubSpot order by NAME (this is the fix)
+    // 3. Find HubSpot order by NAME
     const searchRes = await fetch(
       "https://api.hubapi.com/crm/v3/objects/orders/search",
       {
@@ -94,3 +94,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Webhook failed" });
   }
 }
+
