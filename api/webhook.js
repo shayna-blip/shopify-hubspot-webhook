@@ -46,9 +46,9 @@ export default async function handler(req, res) {
             {
               filters: [
                 {
-                  propertyName: "name",
+                  propertyName: "hs_order_number",
                   operator: "EQ",
-                  value: hubspotOrderName,
+                  value: String(order.order_number),
                 },
               ],
             },
