@@ -6,23 +6,16 @@ export default async function handler(req, res) {
   try {
     const order = req.body;
 
-    // 1. Build HubSpot order name (e.g. #1358)
-    const hubspotOrderName = `#${order.order_number}`;
-
-    // 2. Find Kickflip design image URL
     let designUrl = null;
 
     for (const item of order.line_items || []) {
-      if (item.properties) {
-        for (const prop of item.properties) {
-          if (
-            prop.value &&
-            typeof prop.value === "string" &&
-            prop.value.includes("cdnv2.mycustomizer.com")
-          ) {
-            designUrl = prop.value;
-            break;
-          }
+      for (const prop of item.properties || []) {
+        if (
+          typeof prop.value === "string" &&
+          prop.value.includes("cdnv2.mycustomizer.com")
+        ) {
+          designUrl = prop.value;
+          break;
         }
       }
       if (designUrl) break;
@@ -32,7 +25,9 @@ export default async function handler(req, res) {
       return res.status(200).json({ message: "No design URL found" });
     }
 
-    // 3. Find HubSpot order by Name
+    // wait for HubSpot to finish creating the order
+    await new Promise((r) => setTimeout(r, 3000));
+
     const searchRes = await fetch(
       "https://api.hubapi.com/crm/v3/objects/orders/search",
       {
@@ -62,10 +57,9 @@ export default async function handler(req, res) {
     const orderId = searchData?.results?.[0]?.id;
 
     if (!orderId) {
-      return res.status(404).json({ message: "HubSpot order not found" });
+      return res.status(200).json({ message: "Order not in HubSpot yet" });
     }
 
-    // 4. Update Design Proof URL
     await fetch(
       `https://api.hubapi.com/crm/v3/objects/orders/${orderId}`,
       {
@@ -88,4 +82,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Webhook failed" });
   }
 }
+
 
