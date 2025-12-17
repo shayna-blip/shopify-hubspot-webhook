@@ -6,62 +6,65 @@ export default async function handler(req, res) {
   try {
     const order = req.body;
 
+    // 1. Get Shopify order number (ex: 1358)
+    const shopifyOrderNumber = String(order.order_number);
+
+    // 2. Extract Kickflip design URL
     let designUrl = null;
 
     for (const item of order.line_items || []) {
-      for (const prop of item.properties || []) {
-        if (
-          typeof prop.value === "string" &&
-          prop.value.includes("cdnv2.mycustomizer.com")
-        ) {
-          designUrl = prop.value;
-          break;
+      if (item.properties) {
+        for (const prop of item.properties) {
+          if (
+            prop.value &&
+            typeof prop.value === "string" &&
+            prop.value.includes("cdnv2.mycustomizer.com")
+          ) {
+            designUrl = prop.value;
+            break;
+          }
         }
       }
       if (designUrl) break;
     }
 
+    // No design = nothing to update (still success)
     if (!designUrl) {
       return res.status(200).json({ message: "No design URL found" });
     }
 
-    // wait for HubSpot to finish creating the order
-    await new Promise((r) => setTimeout(r, 3000));
-
-    const searchRes = await fetch(
-      "https://api.hubapi.com/crm/v3/objects/orders/search",
+    // 3. Get HubSpot orders (LIST, not SEARCH)
+    const listRes = await fetch(
+      "https://api.hubapi.com/crm/v3/objects/orders?limit=100",
       {
-        method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.HUBSPOT_TOKEN}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          filterGroups: [
-            {
-              filters: [
-                {
-                  propertyName: "hs_order_number",
-                  operator: "EQ",
-                  value: String(order.order_number),
-                },
-              ],
-            },
-          ],
-          limit: 1,
-        }),
       }
     );
 
-    const searchData = await searchRes.json();
-    const orderId = searchData?.results?.[0]?.id;
+    const listData = await listRes.json();
 
-    if (!orderId) {
-      return res.status(200).json({ message: "Order not in HubSpot yet" });
+    if (!listData.results) {
+      return res.status(500).json({ error: "Failed to fetch HubSpot orders" });
     }
 
+    // Match HubSpot order by hs_order_number
+    const matchedOrder = listData.results.find(
+      (o) => o.properties.hs_order_number === shopifyOrderNumber
+    );
+
+    if (!matchedOrder) {
+      return res
+        .status(404)
+        .json({ message: "HubSpot order not found" });
+    }
+
+    const hubspotOrderId = matchedOrder.id;
+
+    // 4. Update Design Proof URL in HubSpot
     await fetch(
-      `https://api.hubapi.com/crm/v3/objects/orders/${orderId}`,
+      `https://api.hubapi.com/crm/v3/objects/orders/${hubspotOrderId}`,
       {
         method: "PATCH",
         headers: {
@@ -82,5 +85,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Webhook failed" });
   }
 }
-
 
